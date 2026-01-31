@@ -5,13 +5,15 @@
 import { successResponse, errorResponse, TOKEN_LIMITS } from '../utils/response-helpers.js';
 import { handleUidError } from '../utils/uid-helpers.js';
 import type { McpToolResponse } from '../types/common.js';
+import { writeFile } from 'fs/promises';
+import { resolve } from 'path';
 
 const DEFAULT_SNAPSHOT_LINES = 100;
 
 // Tool definitions
 export const takeSnapshotTool = {
   name: 'take_snapshot',
-  description: 'Capture DOM snapshot with stable UIDs. Retake after navigation.',
+  description: 'Capture DOM snapshot with stable UIDs or save to file. Retake after navigation.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -30,6 +32,10 @@ export const takeSnapshotTool = {
       maxDepth: {
         type: 'number',
         description: 'Max tree depth',
+      },
+      filePath: {
+        type: 'string',
+        description: 'Optional path to save snapshot file (TXT). If provided, saves full snapshot to file instead of returning truncated text.',
       },
     },
   },
@@ -67,11 +73,13 @@ export async function handleTakeSnapshot(args: unknown): Promise<McpToolResponse
       includeAttributes = false,
       includeText = true,
       maxDepth,
+      filePath,
     } = (args as {
       maxLines?: number;
       includeAttributes?: boolean;
       includeText?: boolean;
       maxDepth?: number;
+      filePath?: string;
     }) || {};
 
     // Apply hard cap on maxLines to prevent token overflow
@@ -93,6 +101,28 @@ export async function handleTakeSnapshot(args: unknown): Promise<McpToolResponse
       options.maxDepth = maxDepth;
     }
     const formattedText = formatSnapshotTree(snapshot.json.root, 0, options);
+
+    // If filePath is provided, save full snapshot to file
+    if (filePath) {
+      try {
+        const absolutePath = resolve(filePath);
+        const lines = formattedText.split('\n');
+
+        let fileContent = `📸 Snapshot (id=${snapshot.json.snapshotId})`;
+        if (snapshot.json.truncated) {
+          fileContent += ' [DOM truncated]';
+        }
+        fileContent += '\n\n';
+        fileContent += formattedText;
+
+        await writeFile(absolutePath, fileContent, 'utf8');
+        return successResponse(
+          `📸 Snapshot (id=${snapshot.json.snapshotId}, ${lines.length} lines) saved to ${absolutePath}`
+        );
+      } catch (error) {
+        throw new Error(`Failed to save snapshot to ${filePath}: ${(error as Error).message}`);
+      }
+    }
 
     // Get snapshot text (truncated if needed)
     const lines = formattedText.split('\n');
